@@ -59,6 +59,7 @@ class MapViewInteractor: NSObject {
     /* Distances in meters */
     static let MAX_RADIUS_TO_RECALCULATE_MONITORABLE = 3000.0
     static let MIN_RADIUS_TO_RECALCULATE_MONITORABLE = 50.0
+    static let RADIUS_DELTA = 0.05
     
     
     init(dataStore: MapViewDataStoreProtocol) {
@@ -76,18 +77,13 @@ class MapViewInteractor: NSObject {
     }
     
     fileprivate func stopMonitoringUserTempRegion() -> Void {
-        guard let userTempRegion = userTempRegion else {
-            return
+        locationManager.monitoredRegions.forEach {
+            locationManager.stopMonitoring(for: $0)
         }
-        locationManager.stopMonitoring(for: userTempRegion)
     }
     
     fileprivate func isCanSystemMonitoreRegions() -> Bool {
         return CLLocationManager.isMonitoringAvailable(for: CLCircularRegion.self)
-    }
-    
-    fileprivate func isRegionsCalculated() -> Bool {
-        return userTempRegion != nil
     }
     
     fileprivate func calculateMonitorable() {
@@ -119,7 +115,7 @@ class MapViewInteractor: NSObject {
         let radiusMin = min(MapViewInteractor.MAX_RADIUS_TO_RECALCULATE_MONITORABLE, abs(distanceToNearestBorder))
         let radiusMax = max(MapViewInteractor.MIN_RADIUS_TO_RECALCULATE_MONITORABLE, radiusMin)
         let region = CLCircularRegion(center: userCenter,
-                                      radius: radiusMax,
+                                      radius: radiusMax * (1 - MapViewInteractor.RADIUS_DELTA),
                                       identifier: MapViewInteractor.TEMP_REGION_IDENTIFIER)
         return region
     }
@@ -219,10 +215,11 @@ extension MapViewInteractor: CLLocationManagerDelegate {
         }
     }
     
-    func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
-        guard !isRegionsCalculated() else {
-            return
-        }
+    func locationManager(_ manager: CLLocationManager,
+                         didUpdateLocations locations: [CLLocation]) {
+        if userTempRegion != nil { return }
+        checkEntersToRegions()
+        checkExitFromRegions()
         calculateMonitorable()
     }
 }
