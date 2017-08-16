@@ -34,17 +34,19 @@ class MapViewPresenter {
     }
     
     fileprivate func showNotificationUserExit(visitableRegion: VisitableRegion) {
+        let timeSpent = Int(visitableRegion.spentTime())
         if visitableRegion.canToCheckIn() {
-            let body = "User exit, but spent not enought time to checkin (\(visitableRegion.spentTime())"
+            let body = "User exit, and spent enought time to checkin (\(timeSpent))"
             showNotification(body: body, visitableRegion: visitableRegion)
         } else {
-            let body = "User exit, but spent not enought time to checkin (\(visitableRegion.spentTime()))"
+            let body = "User exit, but spent not enought time to checkin (\(timeSpent))"
             showNotification(body: body, visitableRegion: visitableRegion)
         }
     }
     
     fileprivate func showNotificationUserEnter(visitableRegion: VisitableRegion) {
-        let body = "User entered and spent enought time to chekin here (\(visitableRegion.spentTime())"
+        let timeSpent = Int(visitableRegion.spentTime())
+        let body = "User entered and spent enought time to chekin here (\(timeSpent))"
         showNotification(body: body, visitableRegion: visitableRegion)
     }
     
@@ -54,11 +56,8 @@ class MapViewPresenter {
         content.title = identifier
         content.body = body
         content.sound = UNNotificationSound.default()
-        
-        let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 1,
-                                                        repeats: false)
         let request = UNNotificationRequest(identifier: identifier,
-                                            content: content, trigger: trigger)
+                                            content: content, trigger: nil)
         router.showNotification(request: request)
     }
 }

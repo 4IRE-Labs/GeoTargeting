@@ -31,26 +31,16 @@ protocol MapViewInteractorProtocol {
 }
 
 class MapViewInteractor: NSObject {
-    typealias RegionsTuple = (monitorable: [CLCircularRegion], unmonitorable: [CLCircularRegion])
-    
     weak var output: MapViewInteractorOutput!
     var dataStore: MapViewDataStoreProtocol
     
-    /* It is region from user to 10's nearest region after sortion */
+    /* It is redline region from user to nearest region after sortion */
     private(set) var userTempRegion: CLCircularRegion? {
         willSet {
             stopMonitoringUserTempRegion()
         }
         didSet {
             startMonitoringUserTempRegion()
-        }
-    }
-    fileprivate(set) var regionsToMonitore: [CLCircularRegion] = [] {
-        willSet {
-            stopMonitoringRegions()
-        }
-        didSet {
-            startMonitoringRegions()
         }
     }
     
@@ -66,10 +56,9 @@ class MapViewInteractor: NSObject {
     }()
     
     static let TEMP_REGION_IDENTIFIER = "USER_TEMP_REGION_IDENTIFIER"
-    /* Max can be 19 */
-    static let MAX_REGIONS_TO_MONITORE_AT_ONCE = 3
-    /* Distance in meters */
+    /* Distances in meters */
     static let MAX_RADIUS_TO_RECALCULATE_MONITORABLE = 3000.0
+    static let MIN_RADIUS_TO_RECALCULATE_MONITORABLE = 50.0
     
     
     init(dataStore: MapViewDataStoreProtocol) {
@@ -78,18 +67,6 @@ class MapViewInteractor: NSObject {
     
     
     //MARK: - Monitoring
-    
-    fileprivate func startMonitoringRegions() -> Void {
-        regionsToMonitore.forEach { region in
-            locationManager.startMonitoring(for: region)
-        }
-    }
-    
-    fileprivate func stopMonitoringRegions() -> Void {
-        regionsToMonitore.forEach { region in
-            locationManager.stopMonitoring(for: region)
-        }
-    }
     
     fileprivate func startMonitoringUserTempRegion() -> Void {
         guard let userTempRegion = userTempRegion else {
@@ -122,48 +99,62 @@ class MapViewInteractor: NSObject {
             output.performSystemCantTrackRegions()
             return
         }
-        let limit = MapViewInteractor.MAX_REGIONS_TO_MONITORE_AT_ONCE
-        let regionsTuple = monitorableRegions(for: userLocation, limit: limit)
-        regionsToMonitore = regionsTuple.monitorable
-        userTempRegion = recalculateUserTempRegion(for: userLocation)
-        output.monitorable(regions: regionsToMonitore,
-                           unmonitorable: regionsTuple.unmonitorable)
+        guard let nearestUserRegion = dataStore.nearestRegionByRadius(for: userLocation) else {
+            print("User doesn't have any regions to monitore")
+            return
+        }
+        userTempRegion = recalculateUserTempRegion(depenOn: nearestUserRegion,
+                                                   userLocation: userLocation)
+        let allRegions = dataStore.fetchRegions()
+        output.monitorable(regions: [userTempRegion!],
+                           unmonitorable: allRegions)
         output.onChangedUserTemp(region: userTempRegion)
     }
     
-    func monitorableRegions(for userLocation: CLLocation, limit: Int) -> RegionsTuple {
-        let allRegions = dataStore.fetchRegions()
-        let sortedRegions = allRegions.sorted(by: {
-            sortNearest(region1: $0, region2: $1, userLocation: userLocation)
-        })
-        let monitoreable = Array(sortedRegions.prefix(limit))
-        let unmonitoreable = Array(sortedRegions.suffix(from: limit))
-        return (monitoreable, unmonitoreable)
-    }
-    
-    private func sortNearest(region1: CLCircularRegion, region2: CLCircularRegion,
-                             userLocation: CLLocation) -> Bool {
-        let distance1 = userLocation.distance(from: region1.toCLLocation()) - region1.radius
-        let distance2 = userLocation.distance(from: region2.toCLLocation()) - region2.radius
-        return distance1 < distance2
-    }
-    
-    fileprivate func recalculateUserTempRegion(for userLocation: CLLocation) -> CLCircularRegion? {
-        guard let index = regionsToMonitore.halfCount else {
-            return nil
-        }
-        let halfRegion = regionsToMonitore[index]
-        let center = CLLocationCoordinate2DMake(userLocation.coordinate.latitude,
+    fileprivate func recalculateUserTempRegion(depenOn nearest: CLCircularRegion,
+                                               userLocation: CLLocation) -> CLCircularRegion {
+        let userCenter = CLLocationCoordinate2DMake(userLocation.coordinate.latitude,
                                                 userLocation.coordinate.longitude)
-        let maxRadius = min(MapViewInteractor.MAX_RADIUS_TO_RECALCULATE_MONITORABLE, userLocation.distance(from: halfRegion.toCLLocation()))
-        let radius = max(halfRegion.radius, maxRadius)
-        let region = CLCircularRegion(center: center,
-                                      radius: radius,
+        let distanceToNearestBorder = userLocation.distance(from: nearest.toCLLocation()) - nearest.radius
+        let radiusMin = min(MapViewInteractor.MAX_RADIUS_TO_RECALCULATE_MONITORABLE, abs(distanceToNearestBorder))
+        let radiusMax = max(MapViewInteractor.MIN_RADIUS_TO_RECALCULATE_MONITORABLE, radiusMin)
+        let region = CLCircularRegion(center: userCenter,
+                                      radius: radiusMax,
                                       identifier: MapViewInteractor.TEMP_REGION_IDENTIFIER)
         return region
     }
     
     //MARK: - Output Enter/Exit
+    
+    fileprivate func checkEntersToRegions() {
+        guard let userLocation = locationManager.location else {
+            print("Don't know user location")
+            return
+        }
+        let sortedNearestRegions = dataStore.nearestRegionsByCenterCoord(for: userLocation)
+        for circleRegion in sortedNearestRegions {
+            if circleRegion.contains(userLocation.coordinate) {
+                dataStore.saveOnEnterTo(region: circleRegion)
+                outputIfNeededUserEnter(region: circleRegion)
+            } else {
+                break
+            }
+        }
+    }
+    
+    fileprivate func checkExitFromRegions() {
+        guard let userLocation = locationManager.location else {
+            print("Don't know user location")
+            return
+        }
+        let enteredToRegions = dataStore.enteredToRegions()
+        enteredToRegions.forEach { visitableRegion in
+            if !visitableRegion.region.contains(userLocation.coordinate) {
+                outputIfNeededUserExit(region: visitableRegion.region)
+                dataStore.removeAfterExit(region: visitableRegion.region)
+            }
+        }
+    }
     
     fileprivate func outputIfNeededUserEnter(region: CLCircularRegion) {
         guard let visitableRegion = dataStore.visitableRegion(for: region),
@@ -214,23 +205,18 @@ extension MapViewInteractor: MapViewInteractorProtocol {
 
 extension MapViewInteractor: CLLocationManagerDelegate {
     func locationManager(_ manager: CLLocationManager, didEnterRegion region: CLRegion) {
-        guard region.identifier != MapViewInteractor.TEMP_REGION_IDENTIFIER,
-            let circleRegion = region as? CLCircularRegion else {
-            return
+        if region.identifier == MapViewInteractor.TEMP_REGION_IDENTIFIER {
+            checkEntersToRegions()
+            checkExitFromRegions()
         }
-        dataStore.saveOnEnterTo(region: circleRegion)
-        outputIfNeededUserEnter(region: circleRegion)
     }
     
     func locationManager(_ manager: CLLocationManager, didExitRegion region: CLRegion) {
-        guard let circleRegion = region as? CLCircularRegion else {
-            return
-        }
         if region.identifier == MapViewInteractor.TEMP_REGION_IDENTIFIER {
+            checkEntersToRegions()
+            checkExitFromRegions()
             calculateMonitorable()
         }
-        outputIfNeededUserExit(region: circleRegion)
-        dataStore.removeAfterExit(region: circleRegion)
     }
     
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {

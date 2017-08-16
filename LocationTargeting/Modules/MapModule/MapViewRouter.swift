@@ -29,7 +29,8 @@ class MapViewRouter {
         let router = MapViewRouter(view: view)
         let dataStore = MapViewDataStore()
         let interactor = MapViewInteractor(dataStore: dataStore)
-        let presenter = MapViewPresenter(view: view, router: router, interactor: interactor)
+        let presenter = MapViewPresenter(view: view, router: router,
+                                         interactor: interactor)
         
         view.presenter = presenter
         interactor.output = presenter
